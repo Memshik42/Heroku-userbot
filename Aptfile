@@ -1,0 +1,7 @@
+ffmpeg
+libavcodec-dev
+libavformat-dev
+libavutil-dev
+libswscale-dev
+libcairo2
+libmagic1
