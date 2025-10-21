@@ -39,11 +39,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ca-certificates \
-    wkhtmltopdf \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends wkhtmltopdf || echo "wkhtmltopdf not available, skipping...") && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 RUN groupadd -r heroku && useradd -r -g heroku -m -d /home/heroku heroku
 
@@ -56,12 +61,10 @@ RUN mkdir -p /data/private /data/Heroku && \
 COPY --from=builder --chown=heroku:heroku /tmp/heroku /data/Heroku
 
 USER heroku
-
 WORKDIR /data/Heroku
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import sys; sys.exit(0)" || exit 1
 
 EXPOSE 8080
-
 CMD ["python", "-m", "heroku", "--root"]
