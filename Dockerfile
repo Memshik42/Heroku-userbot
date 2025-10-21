@@ -1,59 +1,67 @@
-FROM python:3.10 AS python-base
-FROM python-base AS builder-base
+FROM python:3.10-slim AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=off \
-    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=100 \
-    AIOHTTP_NO_EXTENSIONS=1 \
-    PYSETUP_PATH="/opt/pysetup" \
-    VENV_PATH="/opt/pysetup/.venv" \
-    DOCKER=true \
-    GIT_PYTHON_REFRESH=quiet
+    AIOHTTP_NO_EXTENSIONS=1
 
-RUN apt-get update && apt-get upgrade -y
-
-RUN apt-get install --no-install-recommends -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    curl \
     gcc \
     git \
-    openssl \
-    openssh-server \
-    python3 \
-    python3-dev \
-    python3-pip
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get install --no-install-recommends -y \
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /tmp
+RUN git clone --depth=1 --branch=master https://github.com/coddrago/Heroku /tmp/heroku && \
+    cd /tmp/heroku && \
+    pip install --upgrade pip setuptools wheel && \
+    pip install -r requirements.txt
+
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DOCKER=true \
+    GIT_PYTHON_REFRESH=quiet \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    libavcodec-dev \
-    libavdevice-dev \
-    libavformat-dev \
-    libavutil-dev \
-    libswscale-dev
-
-RUN apt-get install --no-install-recommends -y \
     libcairo2 \
-    libmagic1
+    libmagic1 \
+    git \
+    curl \
+    ca-certificates \
+    wkhtmltopdf \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
-RUN apt-get install --no-install-recommends -y wkhtmltopdf || true
+RUN groupadd -r heroku && useradd -r -g heroku -m -d /home/heroku heroku
 
-# Node.js
-RUN curl -sL https://deb.nodesource.com/setup_18.x -o nodesource_setup.sh && \
-    bash nodesource_setup.sh && \
-    apt-get install -y nodejs && \
-    rm nodesource_setup.sh
-
-RUN rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/*
+COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /data
-RUN mkdir /data/private
-RUN git clone https://github.com/coddrago/Heroku /data/Heroku
+RUN mkdir -p /data/private /data/Heroku && \
+    chown -R heroku:heroku /data
+
+COPY --from=builder --chown=heroku:heroku /tmp/heroku /data/Heroku
+
+USER heroku
 
 WORKDIR /data/Heroku
-RUN git fetch && git checkout master && git pull
-RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD python -c "import sys; sys.exit(0)" || exit 1
 
 EXPOSE 8080
+
 CMD ["python", "-m", "heroku", "--root"]
