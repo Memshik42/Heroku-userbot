@@ -1,4 +1,5 @@
-FROM python:3.10-slim
+FROM python:3.10 AS python-base
+FROM python-base AS builder-base
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=off \
