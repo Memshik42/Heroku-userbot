@@ -63,25 +63,33 @@ set -e\n\
 \n\
 echo "🔍 Checking for session files..."\n\
 \n\
-# Копирование сессий из Secret Files (если есть)\n\
 if [ -d "/etc/secrets" ] && ls /etc/secrets/*.session 1> /dev/null 2>&1; then\n\
     echo "📁 Found sessions in Secret Files"\n\
-    cp /etc/secrets/*.session /data/ 2>/dev/null && echo "✅ Sessions copied from Secret Files!" || echo "⚠️ Failed to copy sessions"\n\
+    for session in /etc/secrets/*.session; do\n\
+        filename=$(basename "$session")\n\
+        echo "Copying $filename..."\n\
+        cp "$session" /data/\n\
+        \n\
+        # Проверка целостности\n\
+        if sqlite3 "/data/$filename" "PRAGMA integrity_check;" | grep -q "ok"; then\n\
+            echo "✅ Session $filename is valid"\n\
+        else\n\
+            echo "❌ Session $filename is corrupted, removing..."\n\
+            rm "/data/$filename"\n\
+        fi\n\
+    done\n\
 else\n\
-    echo "ℹ️ No sessions found in Secret Files"\n\
+    echo "ℹ️ No sessions in Secret Files"\n\
 fi\n\
 \n\
-# Загрузка сессий из MongoDB (если настроено)\n\
 if [ -n "$MONGO_URI" ]; then\n\
-    echo "🗄️ MONGO_URI detected, sessions will be loaded from MongoDB"\n\
+    echo "🗄️ MONGO_URI detected"\n\
 fi\n\
 \n\
-# Проверка наличия сессий\n\
 if ls /data/heroku-*.session 1> /dev/null 2>&1 || ls /data/hikka-*.session 1> /dev/null 2>&1; then\n\
-    echo "✅ Session files found in /data/"\n\
-    ls -lh /data/*.session 2>/dev/null || true\n\
+    echo "✅ Valid session files found"\n\
 else\n\
-    echo "⚠️ No session files found - first time setup required"\n\
+    echo "⚠️ No valid sessions - first time setup required"\n\
 fi\n\
 \n\
 echo "🚀 Starting Heroku userbot..."\n\
