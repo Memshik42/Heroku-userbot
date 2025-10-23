@@ -59,150 +59,114 @@ RUN git fetch && git checkout master && git pull
 
 RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
 
-# Создание entrypoint скрипта с поддержкой Secret Files
+# Создание entrypoint скрипта для сохранения и восстановления сессий
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
-echo "🔄 Heroku Session Manager with Secret Files Support"\n\
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+echo "🔄 Heroku Session Manager"\n\
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
 \n\
-# Функция проверки сессии\n\
+# Функция проверки валидности сессии\n\
 check_session() {\n\
-    if [ -f "$1" ] && sqlite3 "$1" "PRAGMA integrity_check;" 2>/dev/null | grep -q "ok"; then\n\
-        return 0\n\
+    if [ -f "$1" ]; then\n\
+        if sqlite3 "$1" "PRAGMA integrity_check;" 2>/dev/null | grep -q "ok"; then\n\
+            return 0\n\
+        fi\n\
     fi\n\
     return 1\n\
 }\n\
 \n\
-# Функция экспорта для Secret Files\n\
-export_for_secret_files() {\n\
-    echo "📤 Exporting sessions for Secret Files..."\n\
-    rm -rf /data/export/*\n\
-    mkdir -p /data/export/secret_files\n\
+# Функция сохранения сессий\n\
+save_sessions() {\n\
+    echo "💾 Saving sessions..."\n\
+    mkdir -p /data/sessions /data/export/secret_files\n\
+    saved_count=0\n\
     \n\
     for session in /data/*.session; do\n\
         if [ -f "$session" ] && check_session "$session"; then\n\
             filename=$(basename "$session")\n\
-            cp "$session" "/data/export/secret_files/$filename"\n\
-            echo "   ✅ Exported: $filename"\n\
+            # Сохранение в persistent storage\n\
+            cp "$session" /data/sessions/\n\
+            # Подготовка для Secret Files\n\
+            cp "$session" /data/export/secret_files/\n\
+            echo "   ✅ Saved: $filename"\n\
+            ((saved_count++))\n\
+        fi\n\
+    done\n\
+    \n\
+    if [ $saved_count -gt 0 ]; then\n\
+        # Создание архива для удобства\n\
+        cd /data/export\n\
+        zip -q -r sessions_backup.zip secret_files/*.session 2>/dev/null || true\n\
+        echo "   📦 Archive created: sessions_backup.zip"\n\
+        echo "   📥 Download: docker cp $(hostname):/data/export/sessions_backup.zip ./"\n\
+    fi\n\
+    \n\
+    return 0\n\
+}\n\
+\n\
+# Функция экспорта для Secret Files\n\
+export_for_secret_files() {\n\
+    echo "📤 Preparing sessions for Secret Files upload..."\n\
+    mkdir -p /data/export/secret_files\n\
+    \n\
+    for session in /data/*.session; do\n\
+        if [ -f "$session" ] && check_session "$session"; then\n\
+            cp "$session" /data/export/secret_files/\n\
         fi\n\
     done\n\
     \n\
     if ls /data/export/secret_files/*.session 1> /dev/null 2>&1; then\n\
-        cd /data/export\n\
-        zip -r secret_files.zip secret_files/*.session > /dev/null 2>&1\n\
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
-        echo "📦 Sessions ready for Secret Files upload!"\n\
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+        echo "📋 TO SAVE SESSIONS IN SECRET FILES:"\n\
         echo ""\n\
-        echo "📋 TO SAVE YOUR SESSIONS AS SECRET FILES:"\n\
+        echo "1. Download sessions:"\n\
+        echo "   docker cp $(hostname):/data/export/secret_files/ ./"\n\
         echo ""\n\
-        echo "1️⃣  Download the sessions archive:"\n\
-        echo "    docker cp heroku-userbot:/data/export/secret_files.zip ./"\n\
-        echo ""\n\
-        echo "2️⃣  Extract the archive:"\n\
-        echo "    unzip secret_files.zip"\n\
-        echo ""\n\
-        echo "3️⃣  Upload to your platform:"\n\
-        echo "    • Railway: Settings → Variables → Secret Files → Add"\n\
-        echo "    • Render: Environment → Secret Files → Add Secret File"\n\
-        echo "    • Upload each .session file from secret_files/ folder"\n\
-        echo ""\n\
-        echo "4️⃣  Files will be available at:"\n\
-        echo "    /etc/secrets/<filename>.session"\n\
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+        echo "2. Upload to your platform:"\n\
+        echo "   • Railway: Settings → Variables → Secret Files"\n\
+        echo "   • Render: Environment → Secret Files"\n\
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
     fi\n\
 }\n\
 \n\
-# 1. Проверка и импорт из Secret Files\n\
+# 1. Импорт из Secret Files (Railway/Render)\n\
 if [ -d "/etc/secrets" ]; then\n\
-    echo "🔍 Checking Secret Files (/etc/secrets/)..."\n\
+    echo "🔍 Checking Secret Files..."\n\
     if ls /etc/secrets/*.session 1> /dev/null 2>&1; then\n\
         echo "📁 Found sessions in Secret Files:"\n\
         for session in /etc/secrets/*.session; do\n\
             filename=$(basename "$session")\n\
             if check_session "$session"; then\n\
                 cp "$session" /data/\n\
+                echo "   ✅ Imported: $filename"\n\
+                # Сохранение копии\n\
                 mkdir -p /data/sessions\n\
                 cp "$session" /data/sessions/\n\
-                echo "   ✅ Imported: $filename"\n\
             else\n\
-                echo "   ❌ Corrupted: $filename"\n\
+                echo "   ⚠️ Skipped corrupted: $filename"\n\
             fi\n\
         done\n\
     else\n\
-        echo "   ℹ️ No session files found in Secret Files"\n\
+        echo "   ℹ️ No sessions in Secret Files"\n\
     fi\n\
-else\n\
-    echo "⚠️ Secret Files not available (not running on Railway/Render?)"\n\
 fi\n\
 \n\
-# 2. Восстановление сохраненных сессий\n\
+# 2. Восстановление из persistent storage\n\
 if [ -d "/data/sessions" ] && ls /data/sessions/*.session 1> /dev/null 2>&1; then\n\
     echo "📂 Restoring saved sessions..."\n\
     for session in /data/sessions/*.session; do\n\
         filename=$(basename "$session")\n\
-        if [ ! -f "/data/$filename" ] && check_session "$session"; then\n\
-            cp "$session" /data/\n\
-            echo "   ✅ Restored: $filename"\n\
+        if [ ! -f "/data/$filename" ]; then\n\
+            if check_session "$session"; then\n\
+                cp "$session" /data/\n\
+                echo "   ✅ Restored: $filename"\n\
+            fi\n\
         fi\n\
     done\n\
 fi\n\
 \n\
-# 3. Функция сохранения\n\
-save_sessions() {\n\
-    echo "💾 Saving sessions..."\n\
-    mkdir -p /data/sessions\n\
-    session_saved=false\n\
-    for session in /data/*.session; do\n\
-        if [ -f "$session" ] && check_session "$session"; then\n\
-            cp "$session" /data/sessions/\n\
-            echo "   ✅ Saved: $(basename $session)"\n\
-            session_saved=true\n\
-        fi\n\
-    done\n\
-    \n\
-    # Автоматический экспорт для Secret Files при сохранении\n\
-    if [ "$session_saved" = true ]; then\n\
-        export_for_secret_files\n\
-    fi\n\
-}\n\
-\n\
-# 4. Создание helper скрипта\n\
-cat > /data/export_sessions.sh << "HELPER"\n\
-#!/bin/bash\n\
-echo "🚀 Session Export Helper"\n\
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
-\n\
-if ! ls /data/*.session 1> /dev/null 2>&1; then\n\
-    echo "❌ No sessions found to export!"\n\
-    exit 1\n\
-fi\n\
-\n\
-rm -rf /data/export/*\n\
-mkdir -p /data/export/secret_files\n\
-\n\
-for session in /data/*.session; do\n\
-    if [ -f "$session" ]; then\n\
-        cp "$session" /data/export/secret_files/\n\
-        echo "✅ Exported: $(basename $session)"\n\
-    fi\n\
-done\n\
-\n\
-cd /data/export\n\
-zip -r secret_files.zip secret_files/*.session > /dev/null 2>&1\n\
-\n\
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
-echo "✅ Export complete!"\n\
-echo ""\n\
-echo "📥 Download with:"\n\
-echo "   docker cp heroku-userbot:/data/export/secret_files.zip ./"\n\
-echo ""\n\
-echo "Or get individual files from:"\n\
-echo "   /data/export/secret_files/"\n\
-HELPER\n\
-chmod +x /data/export_sessions.sh\n\
-\n\
-# 5. Обработчик завершения\n\
+# 3. Обработчик завершения работы\n\
 cleanup() {\n\
     echo "\n🛑 Shutting down..."\n\
     save_sessions\n\
@@ -211,86 +175,100 @@ cleanup() {\n\
 \n\
 trap cleanup SIGTERM SIGINT EXIT\n\
 \n\
-# 6. Автосохранение\n\
+# 4. Периодическое автосохранение (каждые 5 минут)\n\
 (\n\
     while true; do\n\
-        sleep 600\n\
+        sleep 300\n\
+        echo "⏰ Auto-saving sessions..."\n\
         save_sessions > /dev/null 2>&1\n\
     done\n\
 ) &\n\
+AUTOSAVE_PID=$!\n\
 \n\
-# 7. Проверка статуса\n\
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
-if ls /data/*.session 1> /dev/null 2>&1; then\n\
-    echo "✅ Active sessions:"\n\
+# 5. Мониторинг новых сессий\n\
+(\n\
+    last_count=0\n\
+    while true; do\n\
+        sleep 30\n\
+        current_count=$(ls -1 /data/*.session 2>/dev/null | wc -l)\n\
+        if [ "$current_count" -gt "$last_count" ]; then\n\
+            echo "🆕 New session detected!"\n\
+            save_sessions\n\
+            export_for_secret_files\n\
+            last_count=$current_count\n\
+        fi\n\
+    done\n\
+) &\n\
+MONITOR_PID=$!\n\
+\n\
+# 6. Проверка текущего состояния\n\
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+session_count=$(ls -1 /data/*.session 2>/dev/null | wc -l)\n\
+\n\
+if [ "$session_count" -gt 0 ]; then\n\
+    echo "✅ Found $session_count session(s):"\n\
     for session in /data/*.session; do\n\
-        size=$(du -h "$session" | cut -f1)\n\
-        echo "   • $(basename $session) ($size)"\n\
+        if [ -f "$session" ]; then\n\
+            size=$(du -h "$session" | cut -f1)\n\
+            echo "   • $(basename $session) ($size)"\n\
+        fi\n\
     done\n\
     echo ""\n\
-    echo "💡 TIP: To export sessions for Secret Files, run:"\n\
-    echo "   docker exec heroku-userbot /data/export_sessions.sh"\n\
+    echo "💡 Sessions will be auto-saved every 5 minutes"\n\
+    echo "💡 New sessions will be detected automatically"\n\
 else\n\
-    echo "⚠️ No sessions found - first time setup required"\n\
+    echo "⚠️ No sessions found"\n\
     echo ""\n\
-    echo "After creating a session, it will be automatically:"\n\
-    echo "  • Saved to persistent storage"\n\
-    echo "  • Exported for Secret Files upload"\n\
+    echo "📝 To create a session:"\n\
+    echo "   1. Open Heroku web interface (port 8080)"\n\
+    echo "   2. Complete the authorization process"\n\
+    echo "   3. Session will be automatically saved"\n\
 fi\n\
 \n\
 if [ -n "$MONGO_URI" ]; then\n\
     echo "🗄️ MongoDB connection configured"\n\
 fi\n\
 \n\
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
 echo "🚀 Starting Heroku userbot..."\n\
+echo "🌐 Web interface will be available at port 8080"\n\
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
 \n\
-# Запуск основного процесса\n\
+# Запуск основного процесса Heroku\n\
 exec "$@"' > /entrypoint.sh && chmod +x /entrypoint.sh
 
-# Создание веб-интерфейса для скачивания сессий
-RUN echo '#!/usr/bin/env python3\n\
-import http.server\n\
-import socketserver\n\
-import os\n\
-import json\n\
-from pathlib import Path\n\
+# Создание helper скрипта для ручного экспорта
+RUN echo '#!/bin/bash\n\
+echo "📤 Manual Session Export"\n\
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
 \n\
-PORT = 8081\n\
+mkdir -p /data/export/secret_files\n\
+count=0\n\
 \n\
-class SessionHandler(http.server.SimpleHTTPRequestHandler):\n\
-    def do_GET(self):\n\
-        if self.path == "/sessions":\n\
-            sessions = []\n\
-            export_dir = Path("/data/export/secret_files")\n\
-            if export_dir.exists():\n\
-                for session in export_dir.glob("*.session"):\n\
-                    sessions.append({\n\
-                        "name": session.name,\n\
-                        "size": session.stat().st_size\n\
-                    })\n\
-            \n\
-            self.send_response(200)\n\
-            self.send_header("Content-type", "application/json")\n\
-            self.end_headers()\n\
-            self.wfile.write(json.dumps(sessions).encode())\n\
-        elif self.path == "/export":\n\
-            os.system("/data/export_sessions.sh")\n\
-            self.send_response(200)\n\
-            self.end_headers()\n\
-            self.wfile.write(b"Export complete!")\n\
-        else:\n\
-            super().do_GET()\n\
+for session in /data/*.session; do\n\
+    if [ -f "$session" ]; then\n\
+        cp "$session" /data/export/secret_files/\n\
+        echo "✅ Exported: $(basename $session)"\n\
+        ((count++))\n\
+    fi\n\
+done\n\
 \n\
-os.chdir("/data/export")\n\
-with socketserver.TCPServer(("", PORT), SessionHandler) as httpd:\n\
-    print(f"Session export server at port {PORT}")\n\
-    httpd.serve_forever()' > /data/session_server.py && chmod +x /data/session_server.py
+if [ $count -gt 0 ]; then\n\
+    cd /data/export\n\
+    zip -r sessions_backup.zip secret_files/*.session\n\
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"\n\
+    echo "✅ Exported $count session(s)"\n\
+    echo ""\n\
+    echo "📥 Download command:"\n\
+    echo "   docker cp $(hostname):/data/export/sessions_backup.zip ./"\n\
+else\n\
+    echo "❌ No sessions found to export"\n\
+fi' > /data/export_sessions.sh && chmod +x /data/export_sessions.sh
 
-# Volume для постоянного хранения
+# Volume для постоянного хранения сессий
 VOLUME ["/data/sessions", "/data/export"]
 
-EXPOSE 8080 8081
+EXPOSE 8080
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "heroku", "--root"]
