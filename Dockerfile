@@ -35,13 +35,15 @@ ENV PYTHONUNBUFFERED=1 \
     MALLOC_MMAP_THRESHOLD_=100000 \
     PATH="/opt/venv/bin:$PATH" \
     DOCKER=true \
-    GIT_PYTHON_REFRESH=quiet
+    GIT_PYTHON_REFRESH=quiet \
+    UPDATES_DISABLED=false
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ffmpeg \
         libmagic1 \
         ca-certificates \
+        git \
         && rm -rf /var/lib/apt/lists/* \
         /var/cache/apt/archives/* \
         /tmp/* \
@@ -61,8 +63,16 @@ RUN find /opt/venv -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || 
 
 RUN mkdir -p /data/private
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
+RUN git config --global user.email "bot@koyeb.com" && \
+    git config --global user.name "Koyeb Bot" && \
+    git config --global pull.rebase false && \
+    git config --global --add safe.directory /data/Heroku && \
+    cd /data/Heroku && \
+    git remote set-url origin https://github.com/coddrago/Heroku.git && \
+    git fetch --unshallow 2>/dev/null || true
+
+RUN chmod -R 755 /data/Heroku && \
+    chown -R root:root /data/Heroku
 
 EXPOSE 8080
 
