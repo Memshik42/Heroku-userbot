@@ -1,13 +1,53 @@
-FROM python:3.10
+FROM python:3.10 AS python-base
+FROM python-base AS builder-base
 
-RUN apt-get update && apt-get install -y build-essential git
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100 \
+    AIOHTTP_NO_EXTENSIONS=1 \
+    \
+    PYSETUP_PATH="/opt/pysetup" \
+    VENV_PATH="/opt/pysetup/.venv" \
+    \
+    DOCKER=true \
+    GIT_PYTHON_REFRESH=quiet
 
-WORKDIR /app
+RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \
+    build-essential \
+    curl \
+    ffmpeg \
+    gcc \
+    git \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libcairo2 \
+    libmagic1 \
+    libswscale-dev \
+    openssl \
+    openssh-server \
+    python3 \
+    python3-dev \
+    python3-pip \
+    wkhtmltopdf
+RUN curl -sL https://deb.nodesource.com/setup_18.x -o nodesource_setup.sh && \
+    bash nodesource_setup.sh && \
+    apt-get install -y nodejs && \
+    rm nodesource_setup.sh
+RUN rm -rf /var/lib/apt/lists/ /var/cache/apt/archives/ /tmp/*
 
-COPY requirements.txt .
+WORKDIR /data
+RUN mkdir /data/private
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN git clone https://github.com/coddrago/Heroku /data/Heroku
+WORKDIR /data/Heroku
+RUN git fetch && git checkout master && git pull
 
-COPY . .
+RUN pip install --no-warn-script-location --no-cache-dir -U -r requirements.txt
 
-CMD ["python3", "-m", "heroku", "--web"]
+EXPOSE 8080
+CMD ["python", "-m", "heroku", "--root"]
