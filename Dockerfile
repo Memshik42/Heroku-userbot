@@ -16,5 +16,5 @@ COPY . /app
 # Установка Python зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Команда запуска
-CMD ["python3", "-m", "hikka", "--no-web"]
+# Команда запуска (heroku, а не hikka!)
+CMD ["python3", "-m", "heroku", "--no-web"]
